@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Сова — мобильный предпросмотр</title>
+  <style>
+    html, body { margin: 0; min-height: 100%; background: #202723; }
+    body { display: flex; gap: 20px; padding: 12px; font-family: sans-serif; color: #cbd5cf; }
+    iframe { width: 390px; height: 844px; border: 0; border-radius: 26px; background: #f6f1e7; box-shadow: 0 20px 60px rgba(0,0,0,.5); flex: none; }
+    #diag { width: 360px; margin: 0; padding: 12px; overflow: auto; border-radius: 12px; background: #131814; color: #b7e4cb; font-size: 11px; line-height: 1.5; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <iframe id="phone" src="/#/home"></iframe>
+  <pre id="diag">Загрузка…</pre>
+  <script>
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var target = params.get("path");
+      var frame = document.getElementById("phone");
+      var diag = document.getElementById("diag");
+      if (target) frame.src = target;
+      function run() {
+        try {
+          var doc = frame.contentDocument;
+          var win = frame.contentWindow;
+          var width = doc.documentElement.clientWidth;
+          var lines = [];
+          lines.push("viewport: " + width + "x" + doc.documentElement.clientHeight);
+          lines.push("doc scroll: " + doc.documentElement.scrollWidth + "x" + doc.documentElement.scrollHeight);
+          lines.push("body scroll: " + doc.body.scrollWidth + "x" + doc.body.scrollHeight);
+          lines.push("hash: " + win.location.hash);
+          lines.push("title: " + doc.title);
+          var offenders = [];
+          Array.prototype.forEach.call(doc.querySelectorAll("body *"), function (el) {
+            var style = win.getComputedStyle(el);
+            if (style.display === "none" || style.position === "fixed") return;
+            var r = el.getBoundingClientRect();
+            if (r.width > 0 && (r.right > width + 1 || r.left < -1)) {
+              offenders.push(el.tagName.toLowerCase() + "." + String(el.className.baseVal || el.className || "").split(" ").slice(0, 2).join(".") + " [" + Math.round(r.left) + ".." + Math.round(r.right) + "]");
+            }
+          });
+          lines.push("overflow (" + offenders.length + "):");
+          lines = lines.concat(offenders.slice(0, 18));
+          diag.textContent = lines.join("\n");
+        } catch (err) {
+          diag.textContent = "Ошибка: " + err.message;
+        }
+      }
+      frame.addEventListener("load", function () {
+        window.setTimeout(run, 900);
+      });
+      window.setTimeout(run, 2500);
+    })();
+  </script>
+</body>
+</html>

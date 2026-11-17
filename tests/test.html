@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тесты — Сова</title>
+  <style>
+    :root { color-scheme: light; --ink: #26332c; --muted: #68776e; --line: #d9ded4; --ok: #205c45; --bad: #a63d2f; --paper: #f6f1e7; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px 16px 60px; background: var(--paper); color: var(--ink); font: 15px/1.55 "Segoe UI", system-ui, sans-serif; }
+    main { max-width: 820px; margin: 0 auto; }
+    h1 { margin: 0 0 4px; font-size: 27px; }
+    p.lead { margin: 0 0 20px; color: var(--muted); }
+    .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 18px; }
+    button { padding: 9px 16px; border: 1px solid var(--line); border-radius: 10px; background: #fffdf8; color: var(--ink); font: inherit; font-weight: 650; cursor: pointer; }
+    button.primary { border-color: var(--ok); background: var(--ok); color: #fffdf6; }
+    #summary { margin: 0 0 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: #fffdf8; font-weight: 650; }
+    #summary.pass { border-color: #9ac6b2; background: #eaf5ee; color: var(--ok); }
+    #summary.fail { border-color: #e3b3aa; background: #fbedea; color: var(--bad); }
+    ol { margin: 0; padding: 0; list-style: none; }
+    li { margin-bottom: 8px; padding: 11px 14px; border: 1px solid var(--line); border-radius: 11px; background: #fffdf8; }
+    li.ok { border-left: 4px solid var(--ok); }
+    li.bad { border-left: 4px solid var(--bad); }
+    .name { font-weight: 650; }
+    .tag { margin-left: 8px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+    .ok .tag { color: var(--ok); }
+    .bad .tag { color: var(--bad); }
+    .detail { margin-top: 4px; color: var(--muted); font-size: 13.5px; white-space: pre-wrap; }
+    .note { margin-top: 20px; color: var(--muted); font-size: 13px; }
+    code { padding: 1px 5px; border-radius: 5px; background: #ece5d8; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Тесты «Совы»</h1>
+    <p class="lead">Проверяют логику стора и разбор текста. Данные приложения сохраняются до и восстанавливаются после прогона.</p>
+    <div class="bar">
+      <button class="primary" id="run" type="button">Запустить тесты</button>
+      <button id="restore" type="button">Восстановить данные</button>
+      <span id="status"></span>
+    </div>
+    <div id="summary">Тесты ещё не запускались.</div>
+    <ol id="results"></ol>
+    <p class="note">Открой этот файл через локальный сервер: <code>http://127.0.0.1:8123/tests/test.html</code>. При открытии по <code>file://</code> localStorage может быть недоступен.</p>
+  </main>
+
+  <div id="overlay-root"></div>
+  <div id="toast-root"></div>
+
+  <script src="../js/data.js"></script>
+  <script src="../js/store.js"></script>
+  <script src="../js/ui.js"></script>
+  <script src="../js/sheets.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    const S = window.SovaStore;
+    const KEY = "sova.state.v1";
+    const list = document.getElementById("results");
+    const summary = document.getElementById("summary");
+    const status = document.getElementById("status");
+    let backup = null;
+    let results = [];
+
+    function ensureState() {
+      S.reset();
+      S.state.profile.onboarded = true;
+      S.save();
+    }
+
+    function check(condition, message) {
+      if (!condition) throw new Error(message || "Условие не выполнено");
+    }
+
+    function eq(actual, expected, message) {
+      if (actual !== expected) {
+        throw new Error((message || "Значение не совпало") + ": ожидалось " + JSON.stringify(expected) + ", получено " + JSON.stringify(actual));
+      }
+    }
+
+    function closeTo(actual, expected, delta, message) {
+      if (Math.abs(actual - expected) > delta) {
+        throw new Error((message || "Число вне допуска") + ": ожидалось ≈" + expected + ", получено " + actual);
+      }
+    }
+
+    const tests = [
+      ["Чистый профиль", function () {
+        S.reset();
+        const st = S.state;
+        eq(st.xp, 0, "XP");
+        eq(st.feathers, 10, "Стартовые перья");
+        eq(st.stats.feathersEarned, 10, "Учтены стартовые перья");
+        eq(S.levelInfo().level, 1, "Уровень");
+        eq(st.profile.goalMinutes, 10, "Цель по умолчанию");
+        eq(st.profile.onboarded, false, "Онбординг");
+      }],
+
+      ["Имя", function () {
+        S.reset();
+        eq(S.setName("  Аня  "), true, "Имя должно сохраниться");
+        eq(S.state.profile.name, "Аня", "Обрезка пробелов");
+        eq(S.setName("   "), false, "Пустое имя не принимается");
+        eq(S.setName("я".repeat(50)), true, "Длинное имя принимается");
+        eq(S.state.profile.name.length, 30, "Имя ограничено 30 символами");
+      }],
+
+      ["Цель дня", function () {
+        S.reset();
+        eq(S.setGoal(15), true, "15 минут — допустимая цель");
+        eq(S.getGoalInfo().goalMinutes, 15, "Цель применилась сегодня");
+        eq(S.setGoal(7), false, "7 минут — недопустимая цель");
+        eq(S.state.profile.goalMinutes, 15, "Невалидная цель не изменила настройку");
+      }],
+
+      ["Минуты чтения дают XP", function () {
+        ensureState();
+        const before = S.state.xp;
+        const out = S.addReadingSeconds(120);
+        eq(S.getDay().seconds, 120, "Секунды чтения");
+        closeTo(out.xp, 6, 1, "3 XP за минуту");
+        check(S.state.xp >= before + 5, "XP вырос");
+      }],
+
+      ["Глава и книга", function () {
+        ensureState();
+        const book = S.getBook("tishinka-dom");
+        const feathersBefore = S.state.feathers;
+        const first = S.finishChapter(book, 0);
+        eq(first.already, false, "Глава завершена впервые");
+        eq(S.state.xp, 25, "За главу +25 XP");
+        check(S.state.feathers >= feathersBefore + 4, "За главу +4 пера");
+        eq(S.getProgress(book.id).finishedChapters[0], true, "Флаг главы");
+        eq(S.finishChapter(book, 0).already, true, "Повторное завершение не начисляет XP");
+        eq(S.state.xp, 25, "XP не удвоился");
+        S.finishChapter(book, 1);
+        const last = S.finishChapter(book, 2);
+        eq(last.bookFinished, true, "Книга завершена");
+        eq(S.state.xp, 25 * 3 + 100, "Три главы и бонус за книгу");
+        check(S.state.feathers >= feathersBefore + 4 * 3 + 25, "Бонус перьев за книгу");
+        check(S.getProgress(book.id).finished, "Прогресс книги завершён");
+      }],
+
+      ["Квиз", function () {
+        ensureState();
+        const before = { xp: S.state.xp, feathers: S.state.feathers, quizzes: S.getDay().quizzes };
+        S.recordQuiz(true);
+        eq(S.state.xp, before.xp + 10, "+10 XP за верный ответ");
+        eq(S.state.feathers, before.feathers + 2, "+2 пера за верный ответ");
+        eq(S.getDay().quizzes, before.quizzes + 1, "Счётчик квизов");
+        S.recordQuiz(false);
+        eq(S.state.xp, before.xp + 10, "Неверный ответ не даёт XP");
+      }],
+
+      ["Цель и серия", function () {
+        ensureState();
+        S.setGoal(5);
+        const before = S.state.xp;
+        S.addReadingSeconds(300);
+        const goal = S.getGoalInfo();
+        eq(goal.reached, true, "Цель достигнута");
+        eq(goal.percent, 100, "Прогресс цели");
+        eq(S.getDay().goalReached, true, "Флаг дня");
+        eq(S.state.streak.current, 1, "Серия началась");
+        check(S.state.xp >= before + 15, "+15 XP за цель");
+      }],
+
+      ["Цель фиксируется после достижения", function () {
+        ensureState();
+        S.setGoal(5);
+        S.addReadingSeconds(300);
+        eq(S.getGoalInfo().goalMinutes, 5, "Цель дня — 5 минут");
+        S.setGoal(30);
+        const goal = S.getGoalInfo();
+        eq(goal.goalMinutes, 5, "Достигнутая цель не пересчитывается");
+        eq(goal.reached, true, "Цель остаётся выполненной");
+        eq(goal.percent, 100, "Прогресс остаётся 100%");
+        eq(S.getQuests()[0].target, 5, "Задание дня тоже сохранило цель");
+      }],
+
+      ["Задания и бонус", function () {
+        ensureState();
+        const book = S.getBook("tishinka-dom");
+        S.openBook(book);
+        S.finishChapter(book, 0);
+        const quests = S.getQuests();
+        eq(quests.length, 3, "Три задания дня");
+        const chapterQuest = quests.find(function (q) { return q.id === "chapter"; });
+        eq(chapterQuest.done, true, "Задание за главу готово");
+        const before = { xp: S.state.xp, feathers: S.state.feathers };
+        const claimed = S.claimQuest("chapter");
+        eq(claimed.ok, true, "Награда за задание получена");
+        eq(S.state.xp, before.xp + 25, "+25 XP за задание");
+        eq(S.state.feathers, before.feathers + 5, "+5 перьев за задание");
+        eq(S.claimQuest("chapter").ok, false, "Повторно забрать нельзя");
+
+        // добиваем минуты и остальные задания
+        const minutes = S.getQuests().find(function (q) { return q.id === "minutes"; });
+        while (S.getDay().seconds < minutes.target * 60) S.addReadingSeconds(300);
+        S.getQuests().forEach(function (q) {
+          if (!q.claimed && q.done) S.claimQuest(q.id);
+        });
+        eq(S.questsAllClaimed(), true, "Все задания забраны");
+        eq(S.claimQuestBonus().ok, true, "Бонус дня доступен");
+        eq(S.claimQuestBonus().ok, false, "Бонус нельзя забрать дважды");
+      }],
+
+      ["Достижения", function () {
+        ensureState();
+        const book = S.getBook("tishinka-dom");
+        const before = S.state.feathers;
+        S.finishChapter(book, 0);
+        const first = S.getAchievements().find(function (a) { return a.id === "first_chapter"; });
+        eq(first.unlocked, true, "Достижение за первую главу");
+        check(S.state.feathers >= before + 10 + 4, "Награда достижения начислена");
+      }],
+
+      ["Сундук саги", function () {
+        ensureState();
+        S.booksOfSaga("tishinka").forEach(function (book) {
+          book.chapters.forEach(function (_, i) { S.finishChapter(book, i); });
+        });
+        const saga = S.getSaga("tishinka");
+        const stats = S.getSagaStats(saga);
+        eq(stats.complete, true, "Сага собрана");
+        eq(stats.finishedBooks, 3, "Три книги");
+        const before = { xp: S.state.xp, feathers: S.state.feathers };
+        const reward = S.claimSagaReward("tishinka");
+        eq(reward.ok, true, "Сундук открыт");
+        eq(S.state.xp, before.xp + 150, "+150 XP за сагу");
+        eq(S.state.feathers, before.feathers + 30, "+30 перьев за сагу");
+        eq(S.claimSagaReward("tishinka").ok, false, "Повторно сундук не открыть");
+      }],
+
+      ["Демо-профиль", function () {
+        S.seedDemo();
+        const st = S.state;
+        eq(st.profile.onboarded, true, "Онбординг пройден");
+        eq(st.profile.name, "Марк", "Имя демо");
+        eq(st.profile.goalMinutes, 15, "Цель демо");
+        eq(st.xp, 340, "XP демо");
+        check(!!st.progress["tishinka-dom"], "Есть прочитанная книга");
+        eq(st.progress["tishinka-dom"].finished, true, "Книга завершена");
+      }],
+
+      ["Саги и порядок книг", function () {
+        S.reset();
+        const books = S.booksOfSaga("tishinka");
+        eq(books.length, 3, "Три книги в саге");
+        eq(books[0].order, 1, "Первая книга");
+        eq(books[2].order, 3, "Третья книга");
+        eq(S.getBook("tishinka-dom").title, "Дом на краю тумана", "Поиск книги по id");
+        eq(S.getSaga("tishinka").title, "Тишинка", "Поиск саги по id");
+      }],
+
+      ["Разбор текста на главы", function () {
+        const chapters = window.SovaSheets.parseChapters(
+          "## Глава первая\n\nПервый абзац.\nВторой абзац.\n\n## Глава вторая\n\nТекст второй главы."
+        );
+        eq(chapters.length, 2, "Две главы");
+        eq(chapters[0].title, "Глава первая", "Заголовок первой");
+        eq(chapters[0].paragraphs.length, 1, "Абзацы склеиваются до пустой строки");
+        eq(chapters[1].title, "Глава вторая", "Заголовок второй");
+      }],
+
+      ["Разбор текста без разметки", function () {
+        const chapters = window.SovaSheets.parseChapters("Просто текст.\n\nЕщё абзац.");
+        eq(chapters.length, 1, "Одна глава");
+        eq(chapters[0].title, "Глава 1", "Заголовок по умолчанию");
+        eq(chapters[0].paragraphs.length, 2, "Два абзаца");
+      }],
+
+      ["Разбор «Глава 7» и пустого текста", function () {
+        const chapters = window.SovaSheets.parseChapters("Глава 7. Ночь\n\nТекст.\n\nГлава 8\n\nЕщё текст.");
+        eq(chapters.length, 2, "Две главы");
+        eq(chapters[0].title, "Глава 7. Ночь", "Заголовок с номером");
+        eq(window.SovaSheets.parseChapters("   ").length, 0, "Пустой текст");
+      }],
+
+      ["Уровни", function () {
+        eq(S.levelInfo(0).level, 1, "0 XP — первый уровень");
+        check(S.levelInfo(120).level >= 2, "120 XP — второй уровень");
+        check(S.levelInfo(600).level >= 4, "600 XP — четвёртый уровень");
+        eq(S.levelInfo(0).percent, 0, "Прогресс с нуля");
+      }]
+    ];
+
+    function render() {
+      const passed = results.filter(function (r) { return r.ok; }).length;
+      const failed = results.length - passed;
+      list.innerHTML = results.map(function (r) {
+        return '<li class="' + (r.ok ? "ok" : "bad") + '">' +
+          '<span class="name">' + r.name + '</span><span class="tag">' + (r.ok ? "OK" : "Ошибка") + "</span>" +
+          (r.ok ? "" : '<div class="detail">' + r.error + "</div>") + "</li>";
+      }).join("");
+      summary.className = failed ? "fail" : (results.length ? "pass" : "");
+      summary.textContent = results.length
+        ? "Пройдено " + passed + " из " + results.length + (failed ? " · ошибок: " + failed : " · всё хорошо")
+        : "Тесты ещё не запускались.";
+    }
+
+    function restore() {
+      try {
+        if (backup === null) localStorage.removeItem(KEY);
+        else localStorage.setItem(KEY, backup);
+        status.textContent = "Данные приложения восстановлены.";
+      } catch (err) {
+        status.textContent = "Не удалось восстановить данные: " + err.message;
+      }
+    }
+
+    function run() {
+      if (backup === null) {
+        try { backup = localStorage.getItem(KEY); } catch (err) { backup = null; }
+      }
+      results = [];
+      tests.forEach(function (entry) {
+        try {
+          entry[1]();
+          results.push({ ok: true, name: entry[0] });
+        } catch (err) {
+          results.push({ ok: false, name: entry[0], error: err && err.message ? err.message : String(err) });
+        }
+      });
+      render();
+      status.textContent = "";
+      restore();
+    }
+
+    document.getElementById("run").addEventListener("click", run);
+    document.getElementById("restore").addEventListener("click", function () {
+      restore();
+      backup = null;
+    });
+
+    render();
+    run();
+  })();
+  </script>
+</body>
+</html>
